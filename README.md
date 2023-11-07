@@ -12,6 +12,11 @@ source /home/max/autominy/catkin_ws/install/setup.bash  # replace by your automi
 
 Root of the workspace == the cloned /AdvancedRobotics directroy
 
+### run autominy
+```
+ros2 launch autominy Simulated.launch
+```
+
 ### build workspace
 In root (/AdvancedRobotics)
 ```
@@ -45,7 +50,7 @@ scp -r ros@192.168.43.131:~/<filename> ./
 
 ### record ros topic
 ```
-ros2 bag record <topic_name>
+ros2 bag record /sensors/localization/filtered_map -o straight
 ```
 
 ### create a package
@@ -53,4 +58,8 @@ ros2 bag record <topic_name>
 ros2 pkg create --build-type ament_python <package_name>
 ```
 
+### play a ros bag file
+```
+ros2 bag play ./left
+```
 

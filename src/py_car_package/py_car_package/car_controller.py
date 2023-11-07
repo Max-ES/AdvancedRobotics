@@ -15,6 +15,8 @@
 import math
 import rclpy
 from rclpy.node import Node
+from nav_msgs.msg import Odometry
+import numpy as np
 
 from autominy_msgs.msg import NormalizedSteeringCommand, SpeedCommand
 
@@ -29,11 +31,46 @@ class CarController(Node):
 
         self.publisher_steer_ = self.create_publisher(NormalizedSteeringCommand, '/actuators/steering_normalized', 10)
         self.publisher_speed_ = self.create_publisher(SpeedCommand, '/actuators/speed', 10)
+        self.subsriber_ = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.listener_callback, 10)
+        # self.timer = self.create_timer(timer_period, self.drive_in_sin_curve)
+        self.timer = self.create_timer(timer_period, self.forward)
+        #self.forward()
 
-        self.timer = self.create_timer(timer_period, self.timer_callback)
+    def listener_callback(self, msg: Odometry):
+        #x, y, z, w = msg._pose
+        orientation = msg.pose.pose.orientation
+        print("orientation", orientation)
+        position = msg.pose.pose.position
+        print("position", position)
+        roll, pitch, yaw = self.euler_from_quaternion(orientation.x, orientation.y, orientation.z, orientation.w)
+        print("yaw", yaw)
+        print("_________________________________")
+
+        #self.get_logger().info(msg)
+
+    def euler_from_quaternion(self, x, y, z, w):
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        sinp = 2 * (w * y - z * x)
+        pitch = np.arcsin(sinp)
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+        return roll, pitch, yaw
+    
+    def forward(self):
+        msgSteer = NormalizedSteeringCommand()
+        msgSteer.value = -1.0
+
+        self.publisher_steer_.publish(msg=msgSteer)
+
+        msgSpeed = SpeedCommand()
+        msgSpeed.value = .3
+        self.publisher_speed_.publish(msg=msgSpeed)
         
 
-    def timer_callback(self):
+    def drive_in_sin_curve(self):
         msgSteer = NormalizedSteeringCommand()
         msgSteer.value = math.sin(self.i)
         self.publisher_steer_.publish(msg=msgSteer)
