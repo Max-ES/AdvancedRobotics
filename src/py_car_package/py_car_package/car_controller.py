@@ -38,7 +38,7 @@ class CarController(Node):
         self.publisher_speed_ = self.create_publisher(SpeedCommand, '/actuators/speed', 10)
         self.publisher_steering_angle_ = self.create_publisher(Float64, '/steering_meassured', 10)
         
-        self.subsriber_ = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.meassure_and_publish_steering_angle, 10)
+        self.subscriber_ = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.meassure_and_publish_steering_angle, 10)
         self.last_callback_time = None
         self.last_odo = None
         
@@ -87,8 +87,10 @@ class CarController(Node):
         delta_yaw = (delta_yaw + math.pi) % (2 * math.pi) - math.pi
         
         # Calculate the arc length s, which is the distance traveled
-        # todo: s should be the length of the driven bow (Bogen), not the chord (Sehne)
-        s = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        # s should be the length of the driven bow (Bogen), not the chord (Sehne)
+        # possible solution: assuming the euclidian distance between the two points is the diameter of a circle and the radius of the circle is r = d/2
+        euclidian_dist = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        s = 1/2 * math.pi * euclidian_dist
         
         # Calculate the radius of curvature R
         R = s / delta_yaw
