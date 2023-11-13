@@ -90,12 +90,11 @@ class CarController(Node):
         # s should be the length of the driven bow (Bogen), not the chord (Sehne)
         euclidian_dist = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-        unit_vector = lambda vec : vec / np.linalg.norm(vec)
-        angle_intersection = np.arccos(np.clip(np.dot(unit_vector(yaw1[::-1]), unit_vector(yaw2[::-1])), -1.0, 1.0))
         # calculating radius for a triangle you following formula: sin(a/2) = (euc_dist/2) / r => r = (euc_dist/2) / sin(a/2)
-        r = 1/2 * euclidian_dist * np.sin(angle_intersection/2)
+        r = 1/2 * euclidian_dist * np.sin(delta_yaw/2)
+        
         # formula s = r * pi * alpha * 1/180
-        s = r * np.pi * angle_intersection * 1/180
+        s = r * np.pi * delta_yaw * 1/180
         
         # Calculate the radius of curvature R
         R = s / delta_yaw
