@@ -82,26 +82,16 @@ class CarController(Node):
         _, _, yaw2 = self.euler_from_quaternion(odometry2.pose.pose.orientation)
         
         # Calculate change in orientation
-        delta_yaw = yaw2 - yaw1
-        # Normalize delta_yaw to [-pi, pi]
-        delta_yaw = (delta_yaw + math.pi) % (2 * math.pi) - math.pi
-        
+        delta_yaw = yaw2 - yaw1        
         # Calculate the arc length s, which is the distance traveled
-        # s should be the length of the driven bow (Bogen), not the chord (Sehne)
         euclidian_dist = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        r = euclidian_dist / (np.sin(delta_yaw/2)*2)
+        travelled_distance = r * delta_yaw # Bogenlänge - just for fun
 
-        # calculating radius for a triangle you following formula: sin(a/2) = (euc_dist/2) / r => r = (euc_dist/2) / sin(a/2)
-        r = 1/2 * euclidian_dist * np.sin(delta_yaw/2)
-        
-        # formula s = r * pi * alpha * 1/180
-        s = r * np.pi * delta_yaw * 1/180
-        
-        # Calculate the radius of curvature R
-        R = s / delta_yaw
         # Calculate the steering angle delta
         # see: https://thomasfermi.github.io/Algorithms-for-Automated-Driving/Control/BicycleModel.html
         # "From the triangle in Fig. 22 we find ..."
-        steering_angle = math.atan(wheelbase/R) 
+        steering_angle = math.atan(wheelbase/r) 
         
         return steering_angle
     
