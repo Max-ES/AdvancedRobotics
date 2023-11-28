@@ -38,13 +38,21 @@ class CarController(Node):
         self.publisher_speed_ = self.create_publisher(SpeedCommand, '/actuators/speed', 10)
         self.publisher_steering_angle_ = self.create_publisher(Float64, '/steering_meassured', 10)
         
+        self.fake_publisher = self.create_publisher(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', 100)
+
         self.subscriber_ = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.meassure_and_publish_steering_angle, 10)
+        self.steering_subscriber = self.create_subscription(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', self.steer ,100)
         self.last_callback_time = None
         self.last_odo = None
         
 
     def meassure_and_publish_steering_angle(self, odo: Odometry):
         current_time = time.time()
+        
+        _, _, self.curr_angle = self.euler_from_quaternion(odo.pose.pose.orientation)
+        msgSteer = NormalizedSteeringCommand()
+        msgSteer.value = 0
+        self.fake_publisher.publish(msg=msgSteer)
         
         if self.last_odo is None:
             self.last_odo = odo
@@ -60,7 +68,6 @@ class CarController(Node):
             self.publisher_steering_angle_.publish(msg)
             self.last_odo = odo
             self.last_callback_time = current_time
-
 
     def euler_from_quaternion(self, orientation):
         x, y, z, w = orientation.x, orientation.y, orientation.z, orientation.w
@@ -116,6 +123,20 @@ class CarController(Node):
         self.publisher_speed_.publish(msg=msgSpeed)
 
         self.i += .01
+
+    def steer(self, angle):
+        msgSteer = NormalizedSteeringCommand()
+        print(angle, type(angle))
+        target_angle = 0
+        curr_angle = self.curr_angle
+        print(curr_angle)
+
+        K_p = 0.2
+        p = K_p * (target_angle - curr_angle)
+
+        msgSteer.value = p
+
+        self.publisher_steer_.publish(msg=msgSteer)
 
 
 
