@@ -32,18 +32,21 @@ class CarController(Node):
         #timer_period = 0.01  # seconds
         # self.timer = self.create_timer(timer_period, self.drive_in_sin_curve)
 
-        #self.forward()
 
         self.publisher_steer_ = self.create_publisher(NormalizedSteeringCommand, '/actuators/steering_normalized', 10)
         self.publisher_speed_ = self.create_publisher(SpeedCommand, '/actuators/speed', 10)
         self.publisher_steering_angle_ = self.create_publisher(Float64, '/steering_meassured', 10)
         
-        self.fake_publisher = self.create_publisher(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', 100)
+        self.fake_publisher = self.create_publisher(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', 10)
 
         self.subscriber_ = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.meassure_and_publish_steering_angle, 10)
-        self.steering_subscriber = self.create_subscription(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', self.steer ,100)
+        self.steering_subscriber = self.create_subscription(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', self.steer ,10)
         self.last_callback_time = None
+        self.last_steer_time = 0
+        self.last_error = 0
         self.last_odo = None
+
+        self.forward()
         
 
     def meassure_and_publish_steering_angle(self, odo: Odometry):
@@ -51,7 +54,7 @@ class CarController(Node):
         
         _, _, self.curr_angle = self.euler_from_quaternion(odo.pose.pose.orientation)
         msgSteer = NormalizedSteeringCommand()
-        msgSteer.value = 0
+        msgSteer.value = 0.0 # publish the target angle in the room
         self.fake_publisher.publish(msg=msgSteer)
         
         if self.last_odo is None:
@@ -62,7 +65,6 @@ class CarController(Node):
         # Check if one second has passed since the last callback
         if current_time - self.last_callback_time >= 1:
             steering_angle = self.calculate_steering_angle(self.last_odo, odo, 0.27)
-            print(steering_angle, math.degrees(steering_angle))
             msg = Float64()
             msg.data = steering_angle
             self.publisher_steering_angle_.publish(msg)
@@ -104,12 +106,12 @@ class CarController(Node):
     
     def forward(self):
         msgSteer = NormalizedSteeringCommand()
-        msgSteer.value = 0 # -1 = right; 1 = left; 0 = straight
+        msgSteer.value = 0.0 # -1 = right; 1 = left; 0 = straight
 
-        self.publisher_steer_.publish(msg=msgSteer)
+        self.publisher_steer_.publish(msg=msgSteer) # publish the target steering angle
 
         msgSpeed = SpeedCommand()
-        msgSpeed.value = .3
+        msgSpeed.value = 0.3
         self.publisher_speed_.publish(msg=msgSpeed)
         
 
@@ -124,19 +126,34 @@ class CarController(Node):
 
         self.i += .01
 
-    def steer(self, angle):
-        msgSteer = NormalizedSteeringCommand()
-        print(angle, type(angle))
-        target_angle = 0
-        curr_angle = self.curr_angle
-        print(curr_angle)
+    def steer(self, steering_command):
+        current_time = time.time() * 1000
+        self.last_steer_time = 0 if not self.last_callback_time else self.last_steer_time
+        calls_per_second = 100
+        if current_time - self.last_steer_time >= 1000 / calls_per_second:
+            msgSteer = NormalizedSteeringCommand()
 
-        K_p = 0.2
-        p = K_p * (target_angle - curr_angle)
+            target_angle = steering_command.value
+            curr_angle = self.curr_angle
 
-        msgSteer.value = p
+            K_p = 1
+            K_d = 0.2
 
-        self.publisher_steer_.publish(msg=msgSteer)
+            # gut : 1 0.2 100/s
+            # bad: 10, 2 100/s (left right left right)
+            # slow: 0.2 0 100/s (too large radius)
+
+            error = target_angle - curr_angle
+            p = K_p * error
+            d = 0 if not self.last_error else K_d * (error - self.last_error) * calls_per_second
+            angle = p + d
+            angle = max(-1.0, min(1.0, angle)) # cap to -1 to 1
+            print(target_angle, curr_angle, p, angle)
+            msgSteer.value = angle
+
+            self.last_error = error
+            self.last_steer_time = current_time
+            self.publisher_steer_.publish(msg=msgSteer) # set the steering angle of the car
 
 
 
