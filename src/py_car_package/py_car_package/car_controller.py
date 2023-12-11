@@ -24,30 +24,31 @@ import time
 from autominy_msgs.msg import NormalizedSteeringCommand, SpeedCommand
 from std_msgs.msg import Float64
 
+calls_per_second = 100
+
 class CarController(Node):
     store = {} # stores last error values, last_called timestamps etc.
 
     def __init__(self):
         super().__init__('car_controller')
         self.get_logger().info('Started car package')
-
+        self.target_spped = None
+        self.set_target_speed(0.0)
         self.i = 0
         self.current_wheel_based_speed = 0
         self.speed_controller_output = 0
         self.speed_history: list[tuple[float, float, float, float]] = [] # time, current speed, target speed, controller output
         #timer_period = 0.01  # seconds
         # self.timer = self.create_timer(timer_period, self.drive_in_sin_curve)
-
-
         self.publisher_steer_ = self.create_publisher(NormalizedSteeringCommand, '/actuators/steering_normalized', 10)
         self.publisher_speed_ = self.create_publisher(SpeedCommand, '/actuators/speed', 10)
-        self.publisher_target_speed_ = self.create_publisher(SpeedCommand, '/autominy_msgs/SpeedCommand', 10)
+        #self.publisher_target_speed_ = self.create_publisher(SpeedCommand, '/autominy_msgs/SpeedCommand', 10)
         self.publisher_steering_angle_ = self.create_publisher(Float64, '/steering_meassured', 10)
         self.publisher_target_angle_in_room = self.create_publisher(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', 10)
         
-
         self.subscriber_filtered_map = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.filtered_map_callback, 10)
-        self.subscriber_target_speed_ = self.create_subscription(SpeedCommand, '/autominy_msgs/SpeedCommand', self.pid_speed_controller, 10)
+        self.create_timer(1 / calls_per_second, self.process)
+        #self.subscriber_target_speed_ = self.create_subscription(SpeedCommand, '/autominy_msgs/SpeedCommand', self.pid_speed_controller, 10)
         #self.steering_subscriber = self.create_subscription(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', self.steer ,10)
         self.last_callback_time = None
         self.last_steer_time = 0
@@ -57,15 +58,17 @@ class CarController(Node):
 
         self.last_speed_change = 0
         self.current_speed_sequence_step = 0
-        self.last_speed_control = 0
         self.speed_error_sum = 0
         self.speed_last_error = 0
+
+    def process(self):
+        #self.set_target_anlge_in_room(0.0)
+        self.speed_change_sequence()
+        self.set_steer_angle(0.8)
+        self.pid_speed_controller()
         
     def filtered_map_callback(self, odo: Odometry):
         self.current_wheel_based_speed = odo.twist.twist.linear.x
-        self.set_target_anlge_in_room(0)
-
-        self.speed_change_sequence()
         self.meassure_and_publish_steering_angle(odo)
 
     def meassure_and_publish_steering_angle(self, odo: Odometry):
@@ -119,6 +122,9 @@ class CarController(Node):
         
         return steering_angle
     
+    def set_target_speed(self, speed: float):
+        self.target_speed = speed
+    
     def set_speed(self, speed: float):
         msgSpeed = SpeedCommand()
         msgSpeed.value = speed
@@ -132,52 +138,50 @@ class CarController(Node):
     def set_target_anlge_in_room(self, angle: float):
         msgSteer = NormalizedSteeringCommand()
         msgSteer.value = angle
-        self.publisher_target_angle_in_room(msgSteer)
+        self.publisher_target_angle_in_room.publish(msgSteer)
     
     def forward(self):
         self.set_speed(0.3)
-        self.set_steer_angle(0)
+        self.set_steer_angle(0.0)
 
-    def pid_speed_controller(self, cmd: SpeedCommand):
-        self.set_steer_angle(0.8)
+    def pid_speed_controller(self):
+        current_speed = self.current_wheel_based_speed
+        # PID coefficients
+        # calculated coefficients:
+        #K_p = 7.69
+        #K_i = 76.9 * (1 / calls_per_second)
+        #K_d = 0.19 * calls_per_second
+        # coefficients that work:
+        K_p = 0.4
+        K_i = 3.5 * (1 / calls_per_second)
+        K_d = 0.001 * calls_per_second 
 
-        current_time = time.time() * 1000
-        self.last_speed_control = 0 if not self.last_speed_control else self.last_speed_control
-        calls_per_second = 100
-        if current_time - self.last_speed_control >= 1000 / calls_per_second:
-            self.last_speed_control = current_time
+        # Calculate error
+        error = self.target_speed - current_speed
 
-            target_speed = cmd.value
-            current_speed = self.current_wheel_based_speed
+        # Proportional term
+        P_out = K_p * error
 
-            # PID coefficients
-            K_p = 7.69
-            K_i = 76.9 * 1 / calls_per_second
-            K_d = 0.19 * calls_per_second
+        # Integral term
+        self.speed_error_sum += P_out #error
+        I_out = K_i * self.speed_error_sum
 
-            # Calculate error
-            error = target_speed - current_speed
+        # Derivative term
+        delta_error = error - self.speed_last_error
+        D_out = K_d * delta_error
 
-            # Proportional term
-            P_out = K_p * error
+        # Calculate total output
+        output = P_out + I_out + D_out
+        if (output < 0):
+            output = 0.0 # don't drive backwards
+        print(output)
+        print(f"P: {P_out}, I: {I_out}, D: {D_out}")
+        print(f"v: {current_speed}, t: {self.target_speed}, error: {error}, P_out: {P_out} out: {output}")
+        self.set_speed(output)
 
-            # Integral term
-            self.speed_error_sum += error
-            I_out = K_i * self.speed_error_sum
-
-            # Derivative term
-            delta_error = error - self.speed_last_error
-            D_out = K_d * delta_error
-
-            # Calculate total output
-            output = P_out + I_out + D_out
-            output = max(output, 1.5)
-
-            self.set_speed(output)
-            self.speed_controller_output = output
-
-            # Update last error
-            self.speed_last_error = error
+        self.speed_controller_output = output
+        # Update last error
+        self.speed_last_error = error
 
 
     def speed_change_sequence(self, sequence=[0.2, 0.5, 0.8, 0.2], step_length_in_seconds=3):
@@ -194,14 +198,12 @@ class CarController(Node):
                 plot_speed(self.speed_history)
             print(f"set target speed to {new_speed}")
             
-            msgSpeed = SpeedCommand()
-            msgSpeed.value = new_speed
-            self.publisher_target_speed_.publish(msg=msgSpeed)
+            self.target_speed = new_speed
 
             self.last_speed_change = current_time
 
         self.speed_history.append((time.time(), self.current_wheel_based_speed, sequence[self.current_speed_sequence_step], self.speed_controller_output))
-        print(self.speed_history[-10:])
+        #print(self.speed_history[-10:])
         
 
     def drive_in_sin_curve(self):
