@@ -1,17 +1,3 @@
-# Copyright 2016 Open Source Robotics Foundation, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import math
 import os
 from matplotlib import pyplot as plt
@@ -31,15 +17,17 @@ from std_msgs.msg import Float64
 
 calls_per_second = 100
 
+def select_elements(array, num_elements=10):
+    if len(array) <= num_elements:
+        return array
+    indices = np.linspace(0, len(array) - 1, num=num_elements, dtype=int)
+    return array[indices]
+
 def create_spline_interpolation(input_array):
-    # Extract arc_length, x, and y
-    #input_array()
+    input_array = select_elements(input_array, 15)
     arc_length = input_array[:, 0]
     x = input_array[:, 1]
     y = input_array[:, 2]
-    arc_length = [e for i, e in enumerate(arc_length) if i % 100 == 0 ]
-    x = [e for i, e in enumerate(x) if i % 100 == 0 ]
-    y = [e for i, e in enumerate(y) if i % 100 == 0 ]
 
     # Create cubic splines
     spline_x = CubicSpline(arc_length, x)
@@ -60,8 +48,6 @@ def create_line_strip_marker(points):
     marker.scale.x = 0.01  # Width of the line
     marker.color.a = 1.0  # Alpha
     marker.color.r = 1.0  # Red
-    marker.color.g = 0.0  # Green
-    marker.color.b = 0.0  # Blue
 
     for point in points:
         p = Point()
@@ -71,8 +57,6 @@ def create_line_strip_marker(points):
         marker.points.append(p)
 
     return marker
-
-
 
 
 class CarController(Node):
@@ -114,22 +98,20 @@ class CarController(Node):
         self.speed_error_sum = 0
         self.speed_last_error = 0
 
-        
+        self.publish_marker()
 
 
     def process(self):
         #self.set_target_anlge_in_room(0.0)
-        input_array = self.lane1  # Replace with your actual data
-        arc_length_sampled, x_sampled, y_sampled = create_spline_interpolation(input_array)
-        points = np.column_stack((x_sampled, y_sampled))
-        marker = create_line_strip_marker(points)
-        self.publish_marker(marker)
-
         self.speed_change_sequence()
         self.set_steer_angle(0.8)
         self.pid_speed_controller()
 
-    def publish_marker(self, marker: Marker):
+    def publish_marker(self):
+        input_array = self.lane1
+        arc_length_sampled, x_sampled, y_sampled = create_spline_interpolation(input_array)
+        points = np.column_stack((x_sampled, y_sampled))
+        marker = create_line_strip_marker(points)
         publisher_map_ = self.create_publisher(Marker, '/visualization_msgs/Marker', 10)
         publisher_map_.publish(marker)
         
