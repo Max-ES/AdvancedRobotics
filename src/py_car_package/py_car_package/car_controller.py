@@ -55,6 +55,8 @@ class CarController(Node):
         self.last_error = 0
         self.last_odo = None
 
+        self.lane1 = np.load("lane1.npy")
+        self.lane2 = np.load("lane2.npy")
 
         self.last_speed_change = 0
         self.current_speed_sequence_step = 0
