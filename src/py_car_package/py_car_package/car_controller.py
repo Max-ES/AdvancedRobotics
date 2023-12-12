@@ -13,18 +13,67 @@
 # limitations under the License.
 
 import math
-
+import os
 from matplotlib import pyplot as plt
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 import numpy as np
 import time
+import numpy as np
+from scipy.interpolate import CubicSpline
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
+
 
 from autominy_msgs.msg import NormalizedSteeringCommand, SpeedCommand
 from std_msgs.msg import Float64
 
 calls_per_second = 100
+
+def create_spline_interpolation(input_array):
+    # Extract arc_length, x, and y
+    #input_array()
+    arc_length = input_array[:, 0]
+    x = input_array[:, 1]
+    y = input_array[:, 2]
+    arc_length = [e for i, e in enumerate(arc_length) if i % 100 == 0 ]
+    x = [e for i, e in enumerate(x) if i % 100 == 0 ]
+    y = [e for i, e in enumerate(y) if i % 100 == 0 ]
+
+    # Create cubic splines
+    spline_x = CubicSpline(arc_length, x)
+    spline_y = CubicSpline(arc_length, y)
+
+    # Sample the spline at 1 cm intervals
+    arc_length_sampled = np.arange(arc_length[0], arc_length[-1], 0.01)
+    x_sampled = spline_x(arc_length_sampled)
+    y_sampled = spline_y(arc_length_sampled)
+
+    return arc_length_sampled, x_sampled, y_sampled
+
+def create_line_strip_marker(points):
+    marker = Marker()
+    marker.header.frame_id = "/map"
+    marker.type = marker.LINE_STRIP
+    marker.action = marker.ADD
+    marker.scale.x = 0.01  # Width of the line
+    marker.color.a = 1.0  # Alpha
+    marker.color.r = 1.0  # Red
+    marker.color.g = 0.0  # Green
+    marker.color.b = 0.0  # Blue
+
+    for point in points:
+        p = Point()
+        p.x = point[0]
+        p.y = point[1]
+        p.z = 0.0
+        marker.points.append(p)
+
+    return marker
+
+
+
 
 class CarController(Node):
     store = {} # stores last error values, last_called timestamps etc.
@@ -55,19 +104,35 @@ class CarController(Node):
         self.last_error = 0
         self.last_odo = None
 
-        self.lane1 = np.load("lane1.npy")
-        self.lane2 = np.load("lane2.npy")
+        self.lane1 = np.load(os.path.join(os.path.dirname(__file__),"lane1.npy"))
+        print(list(self.lane1))
+
+        self.lane2 = np.load(os.path.join(os.path.dirname(__file__),"lane2.npy"))
 
         self.last_speed_change = 0
         self.current_speed_sequence_step = 0
         self.speed_error_sum = 0
         self.speed_last_error = 0
 
+        
+
+
     def process(self):
         #self.set_target_anlge_in_room(0.0)
+        input_array = self.lane1  # Replace with your actual data
+        arc_length_sampled, x_sampled, y_sampled = create_spline_interpolation(input_array)
+        points = np.column_stack((x_sampled, y_sampled))
+        marker = create_line_strip_marker(points)
+        self.publish_marker(marker)
+
         self.speed_change_sequence()
         self.set_steer_angle(0.8)
         self.pid_speed_controller()
+
+    def publish_marker(self, marker: Marker):
+        publisher_map_ = self.create_publisher(Marker, '/visualization_msgs/Marker', 10)
+        publisher_map_.publish(marker)
+        
         
     def filtered_map_callback(self, odo: Odometry):
         self.current_wheel_based_speed = odo.twist.twist.linear.x
