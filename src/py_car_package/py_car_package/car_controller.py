@@ -1,5 +1,6 @@
 import math
 import os
+import random
 from matplotlib import pyplot as plt
 import rclpy
 from rclpy.node import Node
@@ -9,7 +10,7 @@ import time
 import numpy as np
 from scipy.interpolate import CubicSpline
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 
 
 from autominy_msgs.msg import NormalizedSteeringCommand, SpeedCommand
@@ -40,14 +41,22 @@ def create_spline_interpolation(input_array):
 
     return arc_length_sampled, x_sampled, y_sampled
 
-def create_line_strip_marker(points):
+i = 0
+
+def create_line_strip_marker(points, color:tuple[int, int, int] = (1.0,0.0,0.0), as_sphere=False):
+    global i
     marker = Marker()
+    marker.id = i
+    i += 1
     marker.header.frame_id = "/map"
-    marker.type = marker.LINE_STRIP
-    marker.action = marker.ADD
+    marker.type = Marker.SPHERE if as_sphere else Marker.LINE_STRIP
+    if not as_sphere:
+        marker.action = marker.ADD
     marker.scale.x = 0.01  # Width of the line
     marker.color.a = 1.0  # Alpha
-    marker.color.r = 1.0  # Red
+    marker.color.r = color[0]  # Red
+    marker.color.g = color[1]  # Green
+    marker.color.b = color[2]  # Blue
 
     for point in points:
         p = Point()
@@ -57,6 +66,53 @@ def create_line_strip_marker(points):
         marker.points.append(p)
 
     return marker
+
+def create_sphere_marker(x, y, color:tuple[int, int, int] = (1.0,0.0,0.0)):
+    global i
+    marker = Marker()
+    marker.header.frame_id = "/map"
+    marker.type = Marker.SPHERE
+    r = 0.1
+    marker.scale.x = r
+    marker.scale.y = r
+    marker.scale.z = r
+    marker.color.a = 1.0  # Alpha
+    marker.color.r = color[0]  # Red
+    marker.color.g = color[1]  # Green
+    marker.color.b = color[2]  # Blue
+
+    marker.pose.position.x = x
+    marker.pose.position.y = y
+    marker.pose.position.z = 0.0
+    marker.id = i
+    i += 1
+
+    return marker
+
+
+def distance(point1, point2):
+    return ((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)**0.5
+
+def find_midpoint(point1, point2):
+    return ((point1[0] + point2[0]) / 2, (point1[1] + point2[1]) / 2)
+
+def find_closest_point_to_given_between_two_points(x, y, point1, point2, tolerance=1e-2):
+    target_point = (x, y)
+    left_point = point1
+    right_point = point2
+
+    while distance(left_point, right_point) > tolerance:
+        midpoint = find_midpoint(left_point, right_point)
+        if distance(midpoint, target_point) < distance(left_point, target_point):
+            right_point = midpoint
+        else:
+            left_point = midpoint
+
+    # Choose the point which is closer to the target point
+    if distance(left_point, target_point) < distance(right_point, target_point):
+        return left_point
+    else:
+        return right_point
 
 
 class CarController(Node):
@@ -80,6 +136,8 @@ class CarController(Node):
         self.publisher_target_angle_in_room = self.create_publisher(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', 10)
         
         self.subscriber_filtered_map = self.create_subscription(Odometry, '/sensors/localization/filtered_map', self.filtered_map_callback, 10)
+        self.subscriber_clicked_point = self.create_subscription(PointStamped, '/clicked_point', self.calculate_closest_points, 10)
+        self.publisher_marker = self.create_publisher(Marker, '/visualization_msgs/Marker', 10)
         self.create_timer(1 / calls_per_second, self.process)
         #self.subscriber_target_speed_ = self.create_subscription(SpeedCommand, '/autominy_msgs/SpeedCommand', self.pid_speed_controller, 10)
         #self.steering_subscriber = self.create_subscription(NormalizedSteeringCommand, 'autominy_msgs/SteeringCommand', self.steer ,10)
@@ -89,7 +147,6 @@ class CarController(Node):
         self.last_odo = None
 
         self.lane1 = np.load(os.path.join(os.path.dirname(__file__),"lane1.npy"))
-        print(list(self.lane1))
 
         self.lane2 = np.load(os.path.join(os.path.dirname(__file__),"lane2.npy"))
 
@@ -98,7 +155,50 @@ class CarController(Node):
         self.speed_error_sum = 0
         self.speed_last_error = 0
 
-        self.publish_marker()
+        self.publish_marker(self.lane1)
+        self.publish_marker(self.lane2)
+ 
+
+    def calculate_closest_points(self, point: PointStamped):
+        print(point)
+        self.publish_closest_point_and_lookahead_point(self.lane1, point)
+        self.publish_closest_point_and_lookahead_point(self.lane2, point)
+        
+    def publish_closest_point_and_lookahead_point(self, lane: list[float, float, float], point: PointStamped):
+        x, y = point.point.x, point.point.y
+        lane_points = select_elements(lane, 500)
+        sorted_points = sorted(lane_points, key=lambda p0: math.sqrt((p0[1] - x)**2 + (p0[2]-y)**2), reverse=False)
+        closest_point, second_closest_point = sorted_points[0:2] 
+        real_closest_point = find_closest_point_to_given_between_two_points(x, y, (closest_point[1], closest_point[2]), (second_closest_point[1], second_closest_point[2]))
+        
+        
+        lane_list = lane.tolist()
+        closest_point_on_spline = sorted(lane_list, key=lambda p0: math.sqrt((p0[1] - real_closest_point[0])**2 + (p0[2]-real_closest_point[1])**2), reverse=False)[0]
+        print(f"closest point on spline: {closest_point_on_spline}")
+        index = lane_list.index(closest_point_on_spline)
+        print(index)
+        start_arc_len = lane[index][0]
+        d = 0.50 # lookahead distance in m 
+        #while True:
+        #    # todo if index >= len(lane):
+        #    index += 1
+        #    print(lane[index])
+        #    current_arc_length, x_lane, y_lane = lane[index]
+        #    if current_arc_length - start_arc_len >= d:
+        #        lookahead_x, lookahead_y = x_lane, y_lane
+        #        break 
+        
+        # performance improvement because arclength is always increased by one cm
+        index += int(d * 100) % len(lane) # % len to avoid out of bounds error
+        _, lookahead_x, lookahead_y = lane[index]
+        
+        
+        marker = create_sphere_marker(x, y, color=(0.0,1.0,1.0))
+        self.publisher_marker.publish(marker)
+        marker = create_sphere_marker(real_closest_point[0], real_closest_point[1], color=(0.0,1.0,0.0))
+        self.publisher_marker.publish(marker)
+        marker = create_sphere_marker(lookahead_x, lookahead_y, color=(1.0,1.0,0.0))
+        self.publisher_marker.publish(marker)
 
 
     def process(self):
@@ -107,13 +207,12 @@ class CarController(Node):
         self.set_steer_angle(0.8)
         self.pid_speed_controller()
 
-    def publish_marker(self):
-        input_array = self.lane1
+    def publish_marker(self, lane):
+        input_array = lane
         arc_length_sampled, x_sampled, y_sampled = create_spline_interpolation(input_array)
         points = np.column_stack((x_sampled, y_sampled))
         marker = create_line_strip_marker(points)
-        publisher_map_ = self.create_publisher(Marker, '/visualization_msgs/Marker', 10)
-        publisher_map_.publish(marker)
+        self.publisher_marker.publish(marker)
         
         
     def filtered_map_callback(self, odo: Odometry):
@@ -223,9 +322,6 @@ class CarController(Node):
         output = P_out + I_out + D_out
         if (output < 0):
             output = 0.0 # don't drive backwards
-        print(output)
-        print(f"P: {P_out}, I: {I_out}, D: {D_out}")
-        print(f"v: {current_speed}, t: {self.target_speed}, error: {error}, P_out: {P_out} out: {output}")
         self.set_speed(output)
 
         self.speed_controller_output = output
@@ -245,14 +341,13 @@ class CarController(Node):
             if self.current_speed_sequence_step == 0 and len(self.speed_history) > 0:
                 # save the speed plot, when step 0 is reached again
                 plot_speed(self.speed_history)
-            print(f"set target speed to {new_speed}")
+            #print(f"set target speed to {new_speed}")
             
             self.target_speed = new_speed
 
             self.last_speed_change = current_time
 
         self.speed_history.append((time.time(), self.current_wheel_based_speed, sequence[self.current_speed_sequence_step], self.speed_controller_output))
-        #print(self.speed_history[-10:])
         
 
     def drive_in_sin_curve(self):
